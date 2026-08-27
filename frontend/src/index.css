@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #070a10;
+    color: #e2e8f0;
+    font-family:
+        -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
+        "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+        sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+    font-family:
+        source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+}
+
+#root {
+    min-height: 100vh;
+    background-color: #070a10;
+}
+
+/* Dark, slim scrollbars to match the terminal aesthetic */
+*::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+*::-webkit-scrollbar-track {
+    background: #070a10;
+}
+*::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+input,
+textarea,
+select,
+button {
+    font-family: inherit;
+}
+
+input:focus,
+textarea:focus,
+select:focus,
+button:focus {
+    outline: none;
+}
+
+@layer base {
+    :root {
+        --background: 220 30% 4%;
+        --foreground: 210 20% 92%;
+        --card: 216 25% 7%;
+        --card-foreground: 210 20% 92%;
+        --popover: 216 25% 7%;
+        --popover-foreground: 210 20% 92%;
+        --primary: 210 20% 98%;
+        --primary-foreground: 220 30% 4%;
+        --secondary: 217 19% 12%;
+        --secondary-foreground: 210 20% 92%;
+        --muted: 217 19% 12%;
+        --muted-foreground: 215 16% 57%;
+        --accent: 217 19% 12%;
+        --accent-foreground: 210 20% 92%;
+        --destructive: 0 84.2% 60.2%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 210 20% 100%;
+        --input: 217 19% 14%;
+        --ring: 43 96% 56%;
+        --radius: 0.75rem;
+    }
+}
+
+@layer base {
+    [data-debug-wrapper="true"] {
+        display: contents !important;
+    }
+
+    [data-debug-wrapper="true"] > * {
+        margin-left: inherit;
+        margin-right: inherit;
+        margin-top: inherit;
+        margin-bottom: inherit;
+        padding-left: inherit;
+        padding-right: inherit;
+        padding-top: inherit;
+        padding-bottom: inherit;
+        column-gap: inherit;
+        row-gap: inherit;
+        gap: inherit;
+        border-left-width: inherit;
+        border-right-width: inherit;
+        border-top-width: inherit;
+        border-bottom-width: inherit;
+        border-left-style: inherit;
+        border-right-style: inherit;
+        border-top-style: inherit;
+        border-bottom-style: inherit;
+        border-left-color: inherit;
+        border-right-color: inherit;
+        border-top-color: inherit;
+        border-bottom-color: inherit;
+    }
+}

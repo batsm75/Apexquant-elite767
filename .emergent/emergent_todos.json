@@ -1,0 +1,30 @@
+[
+  {
+    "content": "Phase 3 BUG: ENTRY/SL/TP signal cards not rendering (TP RegExp newline artifact)",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 3 BUG: raw HTML leak on rejected signal + cards missing in rejected view",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 3 UPDATE: remove DASBOR (Market Insider) menu + dead dashboard code",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 3 UPDATE: fix 'Uncaught runtime errors: Script error.' overlay",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 3 FIX: Gemini quota - multi-model fallback chain in backend proxy",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 3 UPDATE: remove 'Preferensi Signal Dashboard' (Pulse/Momentum/Titan) from Pengaturan",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 3: End to End Testing using Testing Agent - all fixes VERIFIED (iteration_2.json)",
+    "status": "completed"
+  }
+]
