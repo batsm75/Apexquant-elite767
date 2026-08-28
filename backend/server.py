@@ -1,5 +1,8 @@
+import asyncio
+import html as html_lib
 import os
 import json
+import re
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -214,6 +217,179 @@ async def _gemini_with_fallback(body: Dict[str, Any], tools: Optional[list]) -> 
     raise HTTPException(status_code=502, detail=f'AI gagal merespon: {last_err}')
 
 
+# ----------------------------------------------------------------------------
+# Real-time news grounding (free, keyless): Google News RSS headlines +
+# ForexFactory economic calendar. Used to genuinely ground the AI in today's
+# macro releases when Google Search grounding is unavailable on the API tier.
+# ----------------------------------------------------------------------------
+NEWS_RSS = 'https://news.google.com/rss/search'
+FF_CALENDAR = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
+_ground_cache: Dict[str, Any] = {}
+GROUND_TTL = 600  # seconds
+
+ASSET_QUERIES = {
+    'BTC': 'bitcoin OR crypto market', 'ETH': 'ethereum OR crypto market',
+    'SOL': 'solana OR crypto market', 'XRP': 'xrp ripple',
+    'XAU': 'gold price OR XAUUSD', 'XAG': 'silver price',
+    'EUR': 'euro ECB', 'GBP': 'british pound BoE', 'JPY': 'japanese yen BoJ',
+    'AUD': 'australian dollar RBA', 'CAD': 'canadian dollar BoC',
+    'CHF': 'swiss franc SNB', 'NZD': 'new zealand dollar RBNZ',
+    'USD': 'US dollar federal reserve',
+}
+
+
+def _asset_hint(text: str) -> str:
+    up = (text or '').upper()
+    hits = [q for k, q in ASSET_QUERIES.items() if k in up]
+    seen, out = set(), []
+    for h in hits:
+        if h not in seen:
+            seen.add(h)
+            out.append(h)
+    return ' OR '.join(out[:3]) if out else 'forex market OR federal reserve'
+
+
+def _strip_tags(s: str) -> str:
+    s = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', s, flags=re.S)
+    s = re.sub(r'<[^>]+>', '', s)
+    return html_lib.unescape(s).strip()
+
+
+async def _fetch_headlines(query: str, limit: int = 12) -> List[str]:
+    params = {'q': f'{query} when:2d', 'hl': 'en-US', 'gl': 'US', 'ceid': 'US:en'}
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(NEWS_RSS, params=params, headers=UA)
+        if r.status_code != 200:
+            return []
+        items = re.findall(r'<item>(.*?)</item>', r.text, flags=re.S)
+        out = []
+        for it in items[:limit]:
+            t = re.search(r'<title>(.*?)</title>', it, flags=re.S)
+            d = re.search(r'<pubDate>(.*?)</pubDate>', it, flags=re.S)
+            if t:
+                title = _strip_tags(t.group(1))
+                when = _strip_tags(d.group(1))[:16] if d else ''
+                out.append(f'- [{when}] {title}')
+        return out
+    except Exception as e:
+        logger.warning(f'headlines failed: {e}')
+        return []
+
+
+async def _fetch_calendar(limit: int = 14) -> List[str]:
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(FF_CALENDAR, headers=UA)
+        if r.status_code != 200:
+            return []
+        events = r.json()
+        now = datetime.now(timezone.utc)
+        rows = []
+        for ev in events:
+            impact = (ev.get('impact') or '').lower()
+            if impact not in ('high', 'medium'):
+                continue
+            try:
+                when = datetime.fromisoformat(ev['date'])
+            except Exception:
+                continue
+            delta = (when - now).total_seconds() / 3600.0
+            if not (-36 <= delta <= 96):
+                continue
+            rows.append((
+                when,
+                f"- {when.strftime('%a %d %b %H:%M UTC%z')} | {ev.get('country', '')} | "
+                f"{ev.get('title', '')} | impact={ev.get('impact')} | "
+                f"forecast={ev.get('forecast') or '-'} | previous={ev.get('previous') or '-'}"
+            ))
+        rows.sort(key=lambda x: x[0])
+        return [r for _, r in rows[:limit]]
+    except Exception as e:
+        logger.warning(f'calendar failed: {e}')
+        return []
+
+
+async def build_grounding_context(prompt_text: str) -> str:
+    hint = _asset_hint(prompt_text)
+    cached = _ground_cache.get(hint)
+    now = datetime.now(timezone.utc).timestamp()
+    if cached and now - cached['ts'] < GROUND_TTL:
+        return cached['text']
+
+    headlines, calendar = await asyncio.gather(
+        _fetch_headlines(hint), _fetch_calendar()
+    )
+    if not headlines and not calendar:
+        return ''
+
+    stamp = datetime.now(timezone.utc).strftime('%A, %d %B %Y %H:%M UTC')
+    parts = [
+        '===== DATA GROUNDING REAL-TIME (WAJIB DIPAKAI) =====',
+        f'Waktu server saat ini: {stamp}',
+        '',
+        'KALENDER EKONOMI (impact High/Medium, -36 jam s/d +96 jam):',
+    ]
+    parts += calendar or ['- (tidak ada rilis high/medium pada jendela ini)']
+    parts += ['', 'HEADLINE BERITA TERBARU (48 jam terakhir):']
+    parts += headlines or ['- (headline tidak tersedia)']
+    parts += [
+        '',
+        'INSTRUKSI: Gunakan HANYA data di atas sebagai sumber fakta berita/kalender. '
+        'Jangan mengarang rilis data atau tanggal. Jika sebuah event high-impact jatuh '
+        'dalam <12 jam, sebutkan secara eksplisit sebagai risiko utama pada bagian '
+        'katalis/fundamental.',
+        '===== AKHIR DATA GROUNDING =====',
+        '',
+    ]
+    text = '\n'.join(parts)
+    _ground_cache[hint] = {'ts': now, 'text': text}
+    return text
+
+
+def _inject_context(contents: List[Dict[str, Any]], context: str) -> List[Dict[str, Any]]:
+    """Prepend the grounding block to the first text part of the last user turn."""
+    out = json.loads(json.dumps(contents))
+    for content in reversed(out):
+        for part in content.get('parts', []) or []:
+            if isinstance(part, dict) and part.get('text'):
+                part['text'] = context + part['text']
+                return out
+    out.insert(0, {'role': 'user', 'parts': [{'text': context}]})
+    return out
+
+
+@api.get('/news/context')
+async def news_context(hint: str = 'forex'):
+    text = await build_grounding_context(hint)
+    return {'ok': bool(text), 'context': text}
+
+
+# Cached probe: is native Google Search grounding usable on this API tier?
+_grounding_probe: Dict[str, Any] = {'ts': 0.0, 'value': None}
+GROUNDING_PROBE_TTL = 3600
+
+
+async def _grounding_available(tools: list) -> bool:
+    now = datetime.now(timezone.utc).timestamp()
+    if _grounding_probe['value'] is not None and now - _grounding_probe['ts'] < GROUNDING_PROBE_TTL:
+        return bool(_grounding_probe['value'])
+    ok = False
+    try:
+        res = await _call_gemini({
+            'contents': [{'role': 'user', 'parts': [{'text': 'ok'}]}],
+            'tools': tools,
+            'generationConfig': {'temperature': 0},
+        }, GEMINI_MODELS[0])
+        ok = res['status'] == 200 and bool(res['data'].get('candidates'))
+    except Exception as e:
+        logger.warning(f'grounding probe failed: {e}')
+        ok = False
+    _grounding_probe.update({'ts': now, 'value': ok})
+    logger.info(f'Native Google Search grounding available: {ok}')
+    return ok
+
+
 @api.post('/llm/generate')
 async def llm_generate(payload: LlmRequest):
     """Pure passthrough proxy to Google Generative Language API.
@@ -230,6 +406,21 @@ async def llm_generate(payload: LlmRequest):
         body['generationConfig'] = payload.generationConfig
     if payload.systemInstruction:
         body['systemInstruction'] = payload.systemInstruction
+
+    # When the caller asked for Google Search grounding we first check (cheaply,
+    # cached for an hour) whether the API tier actually has grounding quota. If
+    # not, we fall back to our own real-time grounding (economic calendar + fresh
+    # headlines) so the analysis is still genuinely synced with today's releases.
+    if payload.tools:
+        if await _grounding_available(payload.tools):
+            return await _gemini_with_fallback(body, payload.tools)
+        context = await build_grounding_context(json.dumps(payload.contents)[:4000])
+        if context:
+            body['contents'] = _inject_context(payload.contents, context)
+            result = await _gemini_with_fallback(body, None)
+            result['_grounded'] = True
+            result['_grounding_source'] = 'apexquant-realtime-feed'
+            return result
 
     return await _gemini_with_fallback(body, payload.tools)
 

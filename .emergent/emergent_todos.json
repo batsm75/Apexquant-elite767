@@ -1,30 +1,26 @@
 [
   {
-    "content": "Phase 3 BUG: ENTRY/SL/TP signal cards not rendering (TP RegExp newline artifact)",
+    "content": "Phase 4: Ekspor Setup jadi gambar (html-to-image + watermark + Web Share)",
     "status": "completed"
   },
   {
-    "content": "Phase 3 BUG: raw HTML leak on rejected signal + cards missing in rejected view",
+    "content": "Phase 4: Grounding berita real-time (kalender ForexFactory + Google News RSS, keyless)",
     "status": "completed"
   },
   {
-    "content": "Phase 3 UPDATE: remove DASBOR (Market Insider) menu + dead dashboard code",
+    "content": "Phase 4: Hapus tab PREDICTION dari menu News",
     "status": "completed"
   },
   {
-    "content": "Phase 3 UPDATE: fix 'Uncaught runtime errors: Script error.' overlay",
+    "content": "Phase 4: Hapus toggle 'Tampilkan Target Pips' dari Pengaturan",
     "status": "completed"
   },
   {
-    "content": "Phase 3 FIX: Gemini quota - multi-model fallback chain in backend proxy",
+    "content": "Phase 4: End to End Testing via Testing Agent (iteration_3) - backend 100%, free checks 100%",
     "status": "completed"
   },
   {
-    "content": "Phase 3 UPDATE: remove 'Preferensi Signal Dashboard' (Pulse/Momentum/Titan) from Pengaturan",
-    "status": "completed"
-  },
-  {
-    "content": "Phase 3: End to End Testing using Testing Agent - all fixes VERIFIED (iteration_2.json)",
+    "content": "Phase 4: Verifikasi 2 item flagged testing agent (ekspor + ARSIP) - keduanya false negative, terbukti OK",
     "status": "completed"
   }
 ]

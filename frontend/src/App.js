@@ -1,5 +1,3 @@
-/* global __app_id, __firebase_config, __initial_auth_token */
-// Runtime globals injected by public/index.html (mirrors the AI Studio canvas env).
 import React, { useState, useEffect, useRef, memo, useMemo } from 'react';
 import {
 Settings as SettingsIcon, Upload, Image as ImageIcon, X, Play, CheckCircle,
@@ -7,22 +5,25 @@ AlertCircle, ShieldAlert, TrendingUp, Loader2, Target, ArrowLeft, History as His
 Clock, ChevronRight, Search, Activity, Database, Check, ScanLine, BarChart3,
 Copy, Lock, Wallet, Lightbulb, ToggleLeft, ToggleRight, Newspaper, Globe,
 CalendarDays, Trash2, Save, LayoutDashboard, Zap, RefreshCw, UserCheck,
-Flame, Crown, Radio, ArrowRight, Shield, ListOrdered
+Flame, Crown, Radio, ArrowRight, Shield, ListOrdered, ImageDown
 } from 'lucide-react';
+import { toPng } from 'html-to-image';
 import { initializeApp, getApps, getApp } from './lib/fbshim';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from './lib/fbshim';
 import { getFirestore, doc, setDoc, updateDoc, onSnapshot, collection, deleteDoc } from './lib/fbshim';
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL || '';
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'apexquant-unified-v88';
+// Runtime globals injected by public/index.html (mirrors the AI Studio canvas env).
+const RUNTIME = typeof window !== 'undefined' ? window : {};
+const appId = RUNTIME.__app_id || 'apexquant-unified-v88';
 let app = null;
 let auth = null;
 let db = null;
 try {
 let firebaseConfig = {};
-if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-firebaseConfig = typeof __firebase_config === 'string' ? JSON.parse(__firebase_config) :
-__firebase_config;
+if (RUNTIME.__firebase_config) {
+firebaseConfig = typeof RUNTIME.__firebase_config === 'string' ? JSON.parse(RUNTIME.__firebase_config) :
+RUNTIME.__firebase_config;
 }
 if (Object.keys(firebaseConfig).length > 0) {
 app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -543,6 +544,8 @@ const [appConfig, setAppConfig] = useState(DEFAULT_SETTINGS);
 const [draftConfig, setDraftConfig] = useState(DEFAULT_SETTINGS);
 const [searchTerm, setSearchTerm] = useState('');
 const [toastMsg, setToastMsg] = useState('');
+const [isExporting, setIsExporting] = useState(false);
+const exportRef = useRef(null);
 const [showRecModal, setShowRecModal] = useState(false);
 const [activeRecTab, setActiveRecTab] = useState('Scalping');
 const [leverage, setLeverage] = useState(20);
@@ -558,10 +561,6 @@ const [dataMode, setDataMode] = useState('upload');
 const [liveDataLoading, setLiveDataLoading] = useState(false);
 const [predictNews, setPredictNews] = useState(false);
 const [isEvaluating, setIsEvaluating] = useState(false);
-const [predictQuery, setPredictQuery] = useState('');
-const [predictLoading, setPredictLoading] = useState(false);
-const [predictData, setPredictData] = useState(null);
-const [predictError, setPredictError] = useState('');
 const [deepSeekResult, setDeepSeekResult] = useState(null);
 const [historyList, setHistoryList] = useState([]);
 const [historyFilter, setHistoryFilter] = useState('FUTURES');
@@ -578,7 +577,7 @@ rr: appConfig.rr || '1:2', tpLevel: appConfig.tpLevel || 'TP3', risk: appConfig.
 methods: Array.isArray(appConfig.methods) ? appConfig.methods :
 DEFAULT_SETTINGS.methods,
 leverage: appConfig.leverage || 20, lotSize: appConfig.lotSize || '0.01',
-showPips: appConfig.showPips !== undefined ? appConfig.showPips : true,
+showPips: true,
 predictNews: appConfig.predictNews !== undefined ? appConfig.predictNews : false,
 aiPersona: appConfig.aiPersona || 'Standar (Elite Quant AI)',
 confidenceThreshold: appConfig.confidenceThreshold !== undefined ?
@@ -597,7 +596,7 @@ rr: draftConfig.rr || '1:2', tpLevel: draftConfig.tpLevel || 'TP3', risk: draftC
 methods: Array.isArray(draftConfig.methods) ? draftConfig.methods :
 DEFAULT_SETTINGS.methods,
 leverage: draftConfig.leverage || 20, lotSize: draftConfig.lotSize || '0.01',
-showPips: draftConfig.showPips !== undefined ? draftConfig.showPips : true,
+showPips: true,
 predictNews: draftConfig.predictNews !== undefined ? draftConfig.predictNews : false,
 aiPersona: draftConfig.aiPersona || 'Standar (Elite Quant AI)',
 confidenceThreshold: draftConfig.confidenceThreshold !== undefined ?
@@ -635,8 +634,8 @@ let isMounted = true;
 if (!auth) { setIsCloudSyncing(false); return; }
 const initAuth = async () => {
 try {
-if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await
-signInWithCustomToken(auth, __initial_auth_token);
+if (RUNTIME.__initial_auth_token) await
+signInWithCustomToken(auth, RUNTIME.__initial_auth_token);
 else await signInAnonymously(auth);
 } catch (e) { if(isMounted) setIsCloudSyncing(false); }
 };
@@ -689,6 +688,58 @@ return () => { unsubSettings(); unsubHistory(); unsubDashboard(); };
 }, [user]);
 const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 3000);
 };
+const handleExportImage = async (pairName) => {
+if (isExporting) return;
+const node = exportRef.current;
+if (!node) { showToast('Tidak ada setup untuk diekspor.'); return; }
+setIsExporting(true);
+try {
+await new Promise(r => setTimeout(r, 400));
+const dataUrl = await toPng(node, {
+backgroundColor: '#070a10',
+pixelRatio: 2,
+cacheBust: true,
+filter: (el) => !(el.dataset && el.dataset.noExport === 'true')
+});
+const stamp = new Date().toISOString().slice(0, 10);
+const fileName = `ApexQuant_${String(pairName || 'SETUP').replace(/[^A-Za-z0-9]/g, '').toUpperCase()}_${stamp}.png`;
+let shared = false;
+try {
+const blob = await (await fetch(dataUrl)).blob();
+const file = new File([blob], fileName, { type: 'image/png' });
+if (navigator.canShare && navigator.canShare({ files: [file] })) {
+await navigator.share({ files: [file], title: `ApexQuant Setup ${pairName || ''}`.trim() });
+shared = true;
+}
+} catch (shareErr) { shared = false; }
+if (!shared) {
+const link = document.createElement('a');
+link.href = dataUrl; link.download = fileName;
+document.body.appendChild(link); link.click(); document.body.removeChild(link);
+}
+showToast(shared ? 'Setup berhasil dibagikan!' : 'Gambar setup berhasil disimpan!');
+} catch (err) {
+console.error('Export image failed:', err);
+showToast('Gagal membuat gambar setup.');
+} finally {
+setIsExporting(false);
+}
+};
+const ExportWatermark = ({ pairName }) => (
+<div className="flex items-center justify-between gap-3 mt-5 pt-4 border-t border-white/10">
+<div className="flex items-center gap-2.5">
+<div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-lg"><Activity className="w-4 h-4 text-slate-950" /></div>
+<div>
+<p className="text-[11px] font-black tracking-widest text-white leading-none">APEX<span className="text-amber-400">QUANT</span></p>
+<p className="text-[8px] text-slate-500 tracking-widest uppercase mt-0.5">Elite FX &amp; Futures Terminal</p>
+</div>
+</div>
+<div className="text-right">
+<p className="text-[10px] font-black text-amber-400 tracking-widest">{String(pairName || '').toUpperCase()}</p>
+<p className="text-[8px] text-slate-500 tracking-wider mt-0.5">{new Date().toLocaleString('id-ID')}</p>
+</div>
+</div>
+);
 const copyToClipboard = (text) => {
 if (!text) return;
 const textArea = document.createElement("textarea"); textArea.value = text;
@@ -840,62 +891,6 @@ showToast("Evaluasi Loss Selesai!");
 showToast(err.message || "Gagal melakukan evaluasi.");
 } finally {
 setIsEvaluating(false);
-}
-};
-const handlePredictSubmit = async () => {
-if (!predictQuery.trim()) { setPredictError("Tuliskan isu ekonomi atau market yang ingin Anda prediksi."); return; }
-setPredictLoading(true); setPredictError(''); setPredictData(null);
-try {
-const url = `${API_BASE}/api/llm/generate`;
-const promptText = `
-System: Anda adalah AI Elite Quant Analyst ("${safeConfig.aiPersona}") di ApexQuant.
-TUGAS: Analisis mendalam tentang Isu Ekonomi/Geopolitik/Market berikut:
-"${predictQuery}"
-ATURAN MUTLAK BOLA PREDIKSI:
-1. FILTER TOPIK: Fitur ini hanya untuk ekonomi global, geopolitik, kebijakan
-moneter/fiskal, investasi, pasar keuangan, dan Astrologi Finansial. JIKA diluar itu set
-"isRelevant": false.
-2. SUMBER DATA: Gunakan alat Google Search Anda untuk mencari berita terbaru dari
-Sosovalue (API Key Concept: ${SOSO_API_KEY}), Federal Reserve, Bloomberg, dll.
-3. FORMAT OUTPUT: HANYA JSON MURNI. DILARANG KERAS menggunakan simbol
-markdown bintang (* atau **) di dalam teks.
-4. METODE: Analisis dampak berdasarkan pendekatan ${activeMethods.join(', ')} jika
-relevan.
-FORMAT JSON YANG WAJIB DIKEMBALIKAN (Tanpa text apapun diluar bracket
-JSON):
-{
-"isRelevant": true atau false,
-"title": "[Judul Analisis Singkat & Tajam]",
-"date": "${new Date().toLocaleString('id-ID', { timeZoneName: 'short' })}",
-"summary": "[Ringkasan situasi 2-3 kalimat]",
-"factors": ["[Faktor 1]", "[Faktor 2]", "[Faktor 3]"],
-"impactPositive": ["[Dampak positif 1]", "[Dampak positif 2]"],
-"impactNegative": ["[Dampak negatif 1]", "[Dampak negatif 2]"],
-"sentiment": "BULLISH" atau "BEARISH" atau "NETRAL",
-"confidence": "Tinggi" atau "Sedang" atau "Rendah",
-"mainScenario": "[Skenario probabilitas tertinggi]",
-"altScenario": "[Skenario alternatif/risiko]",
-"support": ["[Level Support 1]", "[Level Support 2]"],
-"resistance": ["[Level Resistance 1]", "[Level Resistance 2]"],
-"conclusion": "[Kesimpulan tajam 2-4 kalimat]"
-}
-`;
-const payload = { contents: [{ role: "user", parts: [{ text: promptText }] }], tools: [{
-google_search: {} }], generationConfig: { temperature: 0.5 } };
-const res = await fetchWithBackoff(url, { method: 'POST', headers: { 'Content-Type':
-'application/json' }, body: JSON.stringify(payload) });
-let textResult = res.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-textResult = textResult.replace(/```json/gi, '').replace(/```/gi, '').trim();
-const parsedData = JSON.parse(textResult);
-if(parsedData.isRelevant === false) {
-setPredictError("Fitur Prediction hanya mendukung analisis ekonomi global, geopolitik, investasi, dan pasar keuangan.");
-} else {
-setPredictData(parsedData);
-}
-} catch(err) {
-setPredictError(err.message || "Gagal menghubungkan ke satelit intelijen berita. Coba lagi.");
-} finally {
-setPredictLoading(false);
 }
 };
 const formatPriceDisplay = (price) => {
@@ -1749,8 +1744,14 @@ tangan Anda.
 />
 <span className="text-xs font-bold text-slate-400">KEMBALI</span>
 </button>
+<button onClick={() => handleExportImage(pair)} disabled={isExporting} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 font-bold text-[10px] uppercase tracking-widest transition-all shadow-md focus:outline-none focus:ring-0 outline-none disabled:opacity-50">
+{isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImageDown className="w-3.5 h-3.5" />} Ekspor Gambar
+</button>
 </div>
+<div ref={exportRef} className="bg-[#070a10]">
 {renderCardsAndReport(report, pair, deepSeekResult)}
+{isExporting && <ExportWatermark pairName={pair} />}
+</div>
 </div>
 )}
 {}
@@ -1764,89 +1765,9 @@ py-3 px-4 text-xs font-black tracking-widest rounded-lg transition-all focus:out
 focus:ring-0 outline-none flex items-center justify-center gap-2 border ${newsFilter ===
 'calendar' ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : 'border-transparent text-slate-500 hover:text-slate-300'} `}><CalendarDays className="w-4 h-4" />
 KALENDER</button>
-<button onClick={() => setNewsFilter('prediction')} className={`flex-shrink-0 flex-1
-py-3 px-4 text-xs font-black tracking-widest rounded-lg transition-all focus:outline-none
-focus:ring-0 outline-none flex items-center justify-center gap-2 border ${newsFilter ===
-'prediction' ? 'bg-fuchsia-500/20 text-fuchsia-400 border-fuchsia-500/30 shadow-[0_0_15px_rgba(217,70,239,0.2)]' : 'border-transparent text-slate-500 hover:text-slate-300'}`}><Database className="w-4 h-4" /> PREDICTION 🔮</button>
 </div>
 <div className="w-full relative min-h-[600px]">
 {newsFilter === 'calendar' && <TVCalendarWidget />}
-{newsFilter === 'prediction' && (
-<div className="w-full animate-in fade-in duration-300">
-<div className="bg-[#0b1016]/80 p-5 sm:p-6 rounded-3xl border border-white/10 backdrop-blur-md shadow-2xl mb-6">
-<div className="flex items-start sm:items-center gap-3 mb-4"><div
-className="w-10 h-10 rounded-full bg-fuchsia-500/20 flex items-center justify-center shrink-0 border border-fuchsia-500/30 shadow-[0_0_15px_rgba(217,70,239,0.3)]"><Globe
-className="w-5 h-5 text-fuchsia-400" /></div><div><h3 className="text-sm sm:text-base font-black text-white tracking-widest uppercase">Prediction Makro 🔮</h3><p
-className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">Tulis isu ekonomi, geopolitik,
-kebijakan Bank Sentral, Astrologi Finansial, atau proyeksi pasar yang ingin Anda
-analisis.</p></div></div>
-<textarea value={predictQuery} onChange={(e) =>
-setPredictQuery(e.target.value)} placeholder="Contoh: Apa dampak pergerakan Mercury Retrograde dipadu pidato The Fed malam ini terhadap harga Emas (XAUUSD)?"
-className="w-full h-28 bg-[#070a10] border border-white/10 rounded-xl p-4 text-sm font-medium text-white focus:outline-none focus:border-fuchsia-500/50 transition-all resize-none shadow-inner mb-4 custom-scrollbar placeholder:text-slate-600" />
-{predictError && (<div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 mb-4 flex items-start gap-2.5 shadow-sm"><AlertCircle
-className="w-4 h-4 text-red-400 shrink-0 mt-0.5" /><p className="text-[11px] sm:text-xs text-red-300 font-medium leading-relaxed">{predictError}</p></div>)}
-<button onClick={handlePredictSubmit} disabled={predictLoading ||
-!predictQuery.trim()} className={`w-full py-4 rounded-xl font-black text-xs sm:text-sm flex
-items-center justify-center gap-2 shadow-lg uppercase tracking-widest focus:outline-none
-focus:ring-0 transition-all ${predictLoading ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-transparent' : !predictQuery.trim() ? 'bg-[#111820] text-slate-600 cursor-not-allowed border border-transparent' : 'bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white shadow-[0_0_20px_rgba(217,70,239,0.3)] hover:scale-[1.01]'}`}>{predictLoading ? <><Loader2 className="w-4 h-4 animate-spin" />
-Menganalisis Isu Global...</> : <><Search className="w-4 h-4" /> Prediksi Masa Depan
-🔮</>}</button>
-</div>
-{predictData && (
-<div className="bg-[#0b1016] border border-fuchsia-500/30 rounded-[24px] overflow-hidden shadow-[0_0_30px_rgba(217,70,239,0.1)] relative">
-<div className="absolute top-0 right-0 w-64 h-64 bg-fuchsia-600/10 blur-[80px] pointer-events-none"></div><div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-600/10 blur-[80px] pointer-events-none"></div>
-<div className="p-6 sm:p-8 relative z-10">
-<div className="border-b border-white/10 pb-5 mb-6"><div
-className="flex flex-wrap gap-2 items-center mb-3"><span className="bg-fuchsia-500/20 border border-fuchsia-500/40 text-fuchsia-400 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest shadow-sm">HASIL PREDICTION 🔮</span><span
-className="text-[10px] text-slate-500 font-bold bg-[#111820] px-3 py-1 rounded-lg border border-white/5">{predictData.date}</span></div><h2 className="text-xl sm:text-2xl font-black text-white leading-tight mb-2 tracking-wide">{predictData.title}</h2></div>
-<div className="mb-6"><p className="text-slate-300 text-sm leading-relaxed border-l-2 border-fuchsia-500/50 pl-4 py-1 italic bg-fuchsia-500/5 rounded-r-lg">{predictData.summary}</p></div>
-<div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-<div className="bg-[#111820] p-5 rounded-2xl border border-white/5 shadow-inner"><h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 mb-3 border-b border-white/5 pb-2"><Target className="w-3.5 h-3.5 text-amber-500" /> Faktor Utama
-Pendorong</h4><ul className="space-y-2">{predictData.factors?.map((f, i) => (<li key={i}
-className="flex items-start gap-2 text-xs text-slate-300 leading-relaxed"><span
-className="text-amber-500/80 mt-0.5 shrink-0">■</span> {f}</li>))}</ul></div>
-<div className="flex flex-col gap-4"><div
-className="bg-[#111820] p-5 rounded-2xl border border-white/5 shadow-inner flex items-center justify-between"><div><h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Analisis Sentimen</h4><span className={`text-sm
-sm:text-base font-black px-3 py-1 rounded-lg border shadow-sm flex items-center w-fit
-${predictData.sentiment?.toUpperCase() === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : predictData.sentiment?.toUpperCase() ===
-'BEARISH' ? 'bg-red-500/20 text-red-400 border-red-500/40' : 'bg-slate-500/20 text-slate-300 border-slate-500/40'}`}>{predictData.sentiment?.toUpperCase()}</span></div><div
-className="text-right"><h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Tingkat Keyakinan</h4><span className="text-lg font-black text-white tracking-widest">{predictData.confidence}</span></div></div></div>
-</div>
-<div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-<div className="bg-emerald-900/10 p-4 rounded-xl border border-emerald-500/20"><h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-2 flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" /> Dampak Potensial (Positif)</h4><ul
-className="space-y-1.5">{predictData.impactPositive?.map((ip, i) => (<li key={i}
-className="text-xs text-emerald-100/80 leading-relaxed flex items-start gap-1.5"><CheckCircle className="w-3 h-3 shrink-0 text-emerald-500 mt-0.5" />
-{ip}</li>))}</ul></div>
-<div className="bg-red-900/10 p-4 rounded-xl border border-red-500/20"><h4 className="text-[10px] font-black text-red-400 uppercase tracking-widest mb-2 flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5 rotate-180" /> Dampak Potensial (Negatif)</h4><ul
-className="space-y-1.5">{predictData.impactNegative?.map((in_neg, i) => (<li key={i}
-className="text-xs text-red-100/80 leading-relaxed flex items-start gap-1.5"><X
-className="w-3 h-3 shrink-0 text-red-500 mt-0.5" /> {in_neg}</li>))}</ul></div>
-</div>
-<div className="space-y-4 mb-6">
-<div className="bg-[#111820] p-4 rounded-xl border border-white/5 border-l-4 border-l-blue-500"><h4 className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Skenario Utama</h4><p
-className="text-xs text-slate-300 leading-relaxed">{predictData.mainScenario}</p></div>
-<div className="bg-[#111820] p-4 rounded-xl border border-white/5 border-l-4 border-l-amber-500"><h4 className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1">Skenario Alternatif / Risiko</h4><p
-className="text-xs text-slate-300 leading-relaxed">{predictData.altScenario}</p></div>
-</div>
-{(predictData.support?.length > 0 || predictData.resistance?.length >
-0) && (
-<div className="bg-[#070a10] p-5 rounded-2xl border border-white/10 mb-6 flex flex-col sm:flex-row gap-6"><div className="flex-1"><h4
-className="text-[10px] font-black text-cyan-400 uppercase tracking-widest mb-2 border-b border-white/5 pb-1">Level Penting (Support)</h4><ul
-className="space-y-1">{predictData.support?.map((s, i) => <li key={i} className="text-xs text-slate-300 font-bold font-mono bg-[#111820] px-2 py-1 rounded border border-white/5">{s}</li>)}</ul></div><div className="flex-1"><h4 className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-2 border-b border-white/5 pb-1">Level Penting (Resistance)</h4><ul
-className="space-y-1">{predictData.resistance?.map((r, i) => <li key={i}
-className="text-xs text-slate-300 font-bold font-mono bg-[#111820] px-2 py-1 rounded border border-white/5">{r}</li>)}</ul></div></div>
-)}
-<div className="mt-8 border-t border-white/10 pt-6">
-<h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Kesimpulan Akhir</h4><p className="text-sm font-bold text-white leading-relaxed mb-6">{predictData.conclusion}</p>
-<div className="bg-slate-900/50 p-3 rounded-lg flex items-start gap-2 border border-slate-700/50"><Shield className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" /><p className="text-[9px] sm:text-[10px] text-slate-500 font-medium leading-relaxed italic">Catatan Risiko: Prediksi bersifat probabilistik dan dapat berubah
-mengikuti perkembangan data ekonomi, kebijakan pemerintah, maupun kondisi
-astrologi/geopolitik terbaru. Bukan merupakan nasihat keuangan mutlak.</p></div>
-</div>
-</div>
-</div>
-)}
-</div>
-)}
 </div>
 </div>
 )}
@@ -1860,14 +1781,6 @@ astrologi/geopolitik terbaru. Bukan merupakan nasihat keuangan mutlak.</p></div>
 </button>
 </div>
 <div className="bg-[#0b1016] border border-white/10 rounded-3xl p-6 shadow-xl space-y-8 h-[75vh] overflow-y-auto custom-scrollbar">
-<div className="flex items-center justify-between bg-[#070a10] p-4 rounded-2xl border border-white/5">
-<div><h3 className="text-sm font-bold text-white mb-1">Tampilkan Target
-Pips</h3><p className="text-[10px] text-slate-400">Tampilkan jumlah Pips di kartu
-setup.</p></div>
-<button onClick={() => setDraftConfig(prev => ({...prev, showPips:
-!prev?.showPips}))} className="text-amber-400 hover:text-amber-300 focus:outline-none focus:ring-0 outline-none">{draftConfig?.showPips ? <ToggleRight className="w-8 h-8" /> :
-<ToggleLeft className="w-8 h-8 text-slate-600" />}</button>
-</div>
 <div>
 <label className="text-xs font-bold tracking-wider text-slate-400 uppercase mb-3 block">1. Timeframe Mode (Dinamis)</label>
 <div className="flex flex-wrap gap-2">
@@ -2038,6 +1951,8 @@ disabled={isEvaluating} className="flex items-center gap-1.5 px-3 py-1.5 rounded
 <button onClick={() => handleCopySetupLengkap(activeHistoryItem.report,
 activeHistoryItem.pair)} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0b1016] hover:bg-[#1a232f] border border-white/10 text-slate-300 rounded-lg font-bold text-[10px] transition-all shadow-md focus:outline-none focus:ring-0 outline-none"><Copy
 className="w-3.5 h-3.5" /> Full Copy</button>
+<button onClick={() => handleExportImage(activeHistoryItem.pair)} disabled={isExporting} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-lg font-bold text-[10px] transition-all shadow-md focus:outline-none focus:ring-0 outline-none disabled:opacity-50">{isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImageDown
+className="w-3.5 h-3.5" />} Ekspor</button>
 <button onClick={handleDeleteFromDetail} className="flex items-center justify-center p-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 rounded-lg transition-all focus:outline-none focus:ring-0 outline-none"><Trash2
 className="w-4 h-4" /></button>
 </div>
@@ -2070,8 +1985,9 @@ className="px-3 py-1.5 rounded-lg text-xs font-bold transition-all bg-[#1a232f] 
 </>
 )}
 </div>
-<div className="w-full">{renderCardsAndReport(activeHistoryItem.report,
-activeHistoryItem.pair, activeHistoryItem.deepSeekVerification)}</div>
+<div className="w-full" ref={exportRef}>{renderCardsAndReport(activeHistoryItem.report,
+activeHistoryItem.pair, activeHistoryItem.deepSeekVerification)}
+{isExporting && <ExportWatermark pairName={activeHistoryItem.pair} />}</div>
 </div>
 ) : (
 <div className="flex flex-col w-full">
