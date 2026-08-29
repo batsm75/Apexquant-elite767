@@ -101,3 +101,77 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  Update lanjutan ApexQuant Elite (repo batsm75/Apexquant-elite767):
+  1) Ringkasan Pagi: rangkuman event ekonomi penting hari ini, tampil sebagai kartu di tab NEWS +
+     badge di nav, target sebelum pasar buka 06:00 WIB. Harus hemat credit (generate 1x/hari, cache).
+  2) Jika terjadi perbedaan analisis AI (Gemini vs DeepSeek verifier) -> JANGAN beri setup,
+     tampilkan pesan singkat "NO TRADE 🚫" + "ALASANNYA: ..." (selalu aktif, tanpa toggle).
+  3) Metode analisis TIDAK dihapus (user membatalkan permintaan itu).
+
+backend:
+  - task: "Endpoint Ringkasan Pagi GET /api/news/morning-brief (cache harian di MongoDB)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Endpoint baru: ambil event ForexFactory High/Medium untuk tanggal WIB hari ini, 1x panggilan Gemini untuk narasi (headline/bias/summary/watchlist/caution), simpan di koleksi morning_brief keyed by date -> request berikutnya pakai cache (hemat credit). Ada lock anti double-generate + param ?force=true. Verifikasi manual: 200 OK, events terisi, struktur benar. Catatan: aiGenerated=false karena GEMINI_API_KEY diblokir Google ('API key was reported as leaked') -> fallback mode kalender dipakai."
+  - task: "Cache kalender ForexFactory (anti HTTP 429)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Helper _ff_calendar_raw dengan cache memori 30 menit + persist di koleksi ff_cache; dipakai bersama oleh grounding context dan morning brief. Sebelumnya FF membalas 429 dan event kosong."
+
+frontend:
+  - task: "Kartu RINGKASAN PAGI di tab NEWS + badge unread di nav"
+    implemented: true
+    working: true
+    file: "frontend/src/App.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Fetch /api/news/morning-brief saat app load; kartu menampilkan tanggal, jam pasar buka 06:00 WIB, chip BIAS, jumlah event, headline, summary, jadwal event WIB (impact chip), watchlist, caution, timestamp. Badge titik amber di tombol NEWS bila tanggal brief != localStorage 'apex_brief_read'; hilang otomatis saat tab NEWS dibuka. Diverifikasi via screenshot playwright: kartu & badge tampil dan badge hilang setelah dibuka."
+  - task: "Aturan NO TRADE saat perbedaan analisis AI"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/App.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Jika verifyWithDeepSeek mengembalikan verified=false, setup dibatalkan total (tidak tergantung toggle requireDualVerification): report diganti buildNoTradeReport() -> 'NO TRADE 🚫' + 'ALASANNYA: <reason>' + status/pair/saran singkat, sehingga kartu Entry/SL/TP tidak dirender. Badge dual-AI disembunyikan pada laporan NO TRADE agar tidak dobel. Render khusus: kartu merah besar NO TRADE + kartu ALASANNYA. BELUM bisa diuji end-to-end karena GEMINI_API_KEY diblokir (perlu key baru dari user)."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 0
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Endpoint Ringkasan Pagi GET /api/news/morning-brief (cache harian di MongoDB)"
+    - "Aturan NO TRADE saat perbedaan analisis AI"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: "BLOCKER: GEMINI_API_KEY di backend/.env diblokir Google ('Your API key was reported as leaked') karena ikut ter-commit ke repo publik lewat test_reports/iteration_1.json. Sudah saya redact file itu dan tambahkan test_reports/ ke .gitignore. Semua fitur AI (analisis utama + narasi ringkasan pagi) butuh GEMINI_API_KEY baru dari user. Testing end-to-end ditunda sampai key baru tersedia untuk menghemat credit."

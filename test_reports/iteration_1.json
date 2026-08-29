@@ -8,7 +8,7 @@
         "issue": "Gemini API returns HTTP 429 'You exceeded your current quota' - all LLM generation requests fail after retry attempts",
         "impact": "BLOCKS all AI-powered features: signal generation, news prediction, DeepSeek verification fallback",
         "fix_priority": "CRITICAL",
-        "root_cause": "Gemini API key AIzaSyCL8Yudiook4NJObmmrYGxa9mYg0c2mkgQ has exhausted its free-tier quota",
+        "root_cause": "Gemini API key ***REDACTED*** has exhausted its free-tier quota",
         "workaround": "None - requires quota reset or new API key"
       },
       {
@@ -90,7 +90,7 @@
     "/app/backend_test.py"
   ],
   
-  "action_item_for_main_agent": "CRITICAL: Gemini API quota exhausted (HTTP 429). The API key AIzaSyCL8Yudiook4NJObmmrYGxa9mYg0c2mkgQ has exceeded its free-tier quota. This blocks testing of: (1) BUG FIX 1 - Signal cards rendering (ENTRY/SL/TP cards), (2) BUG FIX 1b - No raw HTML leak on rejection, (3) PERSISTENCE - MongoDB shim settings persistence, (4) ARSIP/HISTORY - generated setups appearing in archive, (5) NEWS PREDICTION AI. Please provide a valid Gemini API key with available quota OR wait for quota reset. DeepSeek API also requires payment (HTTP 402). Frontend UI tests PASSED: UPDATE 1 (DASBOR removed) and UPDATE 2 (no runtime errors) are fully verified and working correctly.",
+  "action_item_for_main_agent": "CRITICAL: Gemini API quota exhausted (HTTP 429). The API key ***REDACTED*** has exceeded its free-tier quota. This blocks testing of: (1) BUG FIX 1 - Signal cards rendering (ENTRY/SL/TP cards), (2) BUG FIX 1b - No raw HTML leak on rejection, (3) PERSISTENCE - MongoDB shim settings persistence, (4) ARSIP/HISTORY - generated setups appearing in archive, (5) NEWS PREDICTION AI. Please provide a valid Gemini API key with available quota OR wait for quota reset. DeepSeek API also requires payment (HTTP 402). Frontend UI tests PASSED: UPDATE 1 (DASBOR removed) and UPDATE 2 (no runtime errors) are fully verified and working correctly.",
   
   "should_call_test_agent_after_fix": "true",
   "should_main_agent_test_itself": "false"

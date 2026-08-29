@@ -5,7 +5,7 @@ AlertCircle, ShieldAlert, TrendingUp, Loader2, Target, ArrowLeft, History as His
 Clock, ChevronRight, Search, Activity, Database, Check, ScanLine, BarChart3,
 Copy, Lock, Wallet, Lightbulb, ToggleLeft, ToggleRight, Newspaper, Globe,
 CalendarDays, Trash2, Save, LayoutDashboard, Zap, RefreshCw, UserCheck,
-Flame, Crown, Radio, ArrowRight, Shield, ListOrdered, ImageDown
+Flame, Crown, Radio, ArrowRight, Shield, ListOrdered, ImageDown, Ban, Sunrise, Bell
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { initializeApp, getApps, getApp } from './lib/fbshim';
@@ -170,6 +170,19 @@ console.error("Gagal melakukan verifikasi DeepSeek:", e);
 return null;
 }
 };
+// Laporan singkat ketika terjadi perbedaan analisis antar AI (setup dibatalkan total).
+const buildNoTradeReport = (pairName, reason, biasAwal, confidence) => {
+const alasan = (reason || 'Terjadi perbedaan hasil analisis antar AI pada struktur dan momentum harga.').trim();
+return [
+'NO TRADE 🚫',
+`ALASANNYA: ${alasan}`,
+'',
+`📊 Status: Perbedaan Analisis AI (Dual-AI Mismatch)${biasAwal ? ` — bias awal ${biasAwal} dibatalkan` : ''}`,
+`📊 Pair: ${pairName}${confidence ? ` | Confidence awal: ${confidence}%` : ''}`,
+'📊 Saran: Tunggu struktur & momentum baru yang lebih selaras sebelum eksekusi.'
+].join('\n');
+};
+
 const TIMEFRAMES = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
 const TF_MAP = {
 Binance: { M1:'1m', M5:'5m', M15:'15m', M30:'30m', H1:'1h', H4:'4h', D1:'1d' },
@@ -567,6 +580,33 @@ const [historyFilter, setHistoryFilter] = useState('FUTURES');
 const [activeHistoryItem, setActiveHistoryItem] = useState(null);
 const [itemToDelete, setItemToDelete] = useState(null);
 const [newsFilter, setNewsFilter] = useState('calendar');
+// --- Ringkasan Pagi (Morning Brief) ---
+const [morningBrief, setMorningBrief] = useState(null);
+const [briefLoading, setBriefLoading] = useState(false);
+const [briefUnread, setBriefUnread] = useState(false);
+const loadMorningBrief = React.useCallback(async (force = false) => {
+setBriefLoading(true);
+try {
+const res = await fetch(`${API_BASE}/api/news/morning-brief${force ? '?force=true' : ''}`);
+const json = await res.json();
+if (json?.brief) {
+setMorningBrief(json.brief);
+let lastRead = null;
+try { lastRead = localStorage.getItem('apex_brief_read'); } catch (e) {}
+setBriefUnread(lastRead !== json.brief.date);
+}
+} catch (e) { console.error('Gagal memuat ringkasan pagi:', e); }
+finally { setBriefLoading(false); }
+}, []);
+useEffect(() => { loadMorningBrief(false); }, [loadMorningBrief]);
+const markBriefRead = React.useCallback((dateKey) => {
+if (!dateKey) return;
+try { localStorage.setItem('apex_brief_read', dateKey); } catch (e) {}
+setBriefUnread(false);
+}, []);
+useEffect(() => {
+if (activeTab === 'news' && morningBrief?.date) markBriefRead(morningBrief.date);
+}, [activeTab, morningBrief, markBriefRead]);
 const pressTimer = useRef(null);
 const isLongPress = useRef(false);
 const safeConfig = useMemo(() => {
@@ -1191,14 +1231,13 @@ dsVerification = await verifyWithDeepSeek(cleanedReport, validationIndicators,
 pair.toUpperCase());
 if (dsVerification) {
 setDeepSeekResult(dsVerification);
-if (dsVerification.verified === false && safeConfig.requireDualVerification) {
+if (dsVerification.verified === false) {
+// Perbedaan analisis AI -> setup DIBATALKAN TOTAL, hanya pesan singkat NO TRADE.
 isNoTrade = true;
 finalStatus = 'rejected';
-cleanedReport = cleanedReport.replace(
-/🧭 Arah:.*/,
-`⚠ SINYAL DITOLAK OTOMATIS (Tidak Terverifikasi
-Dual-AI)\n${cleanedReport.match(/🧭 Arah:.*/)?.[0] || '🧭 Arah: NEUTRAL'}`
-);
+const biasAwal = cleanedReport.match(/Arah:\s*(LONG|SHORT)/i)?.[1]?.toUpperCase() || null;
+cleanedReport = buildNoTradeReport(pair.toUpperCase(), dsVerification.reason, biasAwal,
+currentConfidence);
 }
 }
 }
@@ -1257,7 +1296,8 @@ pips: tp2.pips });
 const tp3 = extractTP('TP3'); if (tp3) tps.push({ label: 'TAKE PROFIT 3', price: tp3.price,
 pips: tp3.pips });
 let dsBadge = null;
-if (dsVerificationData) {
+const isNoTradeReport = /NO TRADE/i.test(sanitizeText) || sanitizeText.includes('🚫');
+if (dsVerificationData && !isNoTradeReport) {
 if (dsVerificationData.verified) {
 dsBadge = (
 <div className="w-full mt-4 bg-emerald-500/10 border border-emerald-500/30 p-3 sm:p-4 rounded-xl flex items-start gap-3 animate-in fade-in shadow-sm">
@@ -1328,6 +1368,27 @@ return <span key={i}>{part}</span>;
 };
 const renderInlineText = (line, idx) => {
 let className = "min-h-[1.5rem] text-[13px] sm:text-sm text-slate-300 leading-relaxed mb-2.5 whitespace-pre-wrap ";
+if (line.trim().startsWith('NO TRADE')) {
+return (
+<div key={idx} className="w-full bg-red-500/10 border-2 border-red-500/40 rounded-2xl p-5 sm:p-6 mb-4 mt-1 shadow-[0_0_25px_rgba(239,68,68,0.15)] animate-in fade-in flex items-center gap-4">
+<Ban className="w-9 h-9 sm:w-11 sm:h-11 text-red-500 shrink-0" />
+<div>
+<div className="text-2xl sm:text-3xl font-black text-red-500 tracking-widest leading-none">NO TRADE 🚫</div>
+<div className="text-[10px] sm:text-[11px] font-bold text-red-300/70 uppercase tracking-widest mt-2">Setup dibatalkan — tidak ada entry, SL, atau TP</div>
+</div>
+</div>
+);
+}
+if (line.trim().startsWith('ALASANNYA:')) {
+return (
+<div key={idx} className="w-full bg-[#141a22] border border-red-500/25 rounded-2xl p-4 sm:p-5 mb-5 shadow-md animate-in fade-in">
+<span className="text-[10px] sm:text-[11px] font-black text-red-400 uppercase tracking-widest block mb-2">Alasannya</span>
+<span className="text-[13px] sm:text-sm text-red-100/85 font-medium leading-relaxed block">
+{renderMarkdown(line.replace(/^\s*ALASANNYA:\s*/i, '').trim())}
+</span>
+</div>
+);
+}
 if (line.startsWith('📊 Berita & Sentimen')) {
 return (
 <div key={idx} className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 my-5 shadow-sm">
@@ -1759,6 +1820,95 @@ tangan Anda.
 {activeTab === 'news' && (
 <div className="animate-in fade-in duration-200">
 <div className="flex items-center gap-2 mb-6"><Newspaper className="w-5 h-5 text-indigo-400" /><h2 className="text-sm font-black uppercase tracking-widest text-white">Intelijen Berita Makro</h2></div>
+{/* ================= RINGKASAN PAGI ================= */}
+<div className="bg-gradient-to-br from-[#141a22] to-[#0e131a] border border-amber-500/25 rounded-[22px] p-5 sm:p-6 mb-6 shadow-[0_0_30px_rgba(245,158,11,0.08)]">
+<div className="flex items-start justify-between gap-3 mb-4">
+<div className="flex items-center gap-3">
+<div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
+<Sunrise className="w-5 h-5 text-amber-400" />
+</div>
+<div>
+<div className="text-[11px] sm:text-xs font-black uppercase tracking-widest text-amber-400">Ringkasan Pagi</div>
+<div className="text-[9px] sm:text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">
+{morningBrief?.date || '—'} • sebelum pasar buka {morningBrief?.marketOpen || '06:00'} WIB
+</div>
+</div>
+</div>
+<button onClick={() => loadMorningBrief(true)} disabled={briefLoading}
+className="p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 transition-all disabled:opacity-40 focus:outline-none focus:ring-0 outline-none"
+title="Perbarui ringkasan (memakai 1 permintaan AI)">
+<RefreshCw className={`w-4 h-4 ${briefLoading ? 'animate-spin' : ''}`} />
+</button>
+</div>
+{briefLoading && !morningBrief && (
+<div className="flex items-center gap-2 text-slate-400 text-xs font-bold py-6 justify-center">
+<Loader2 className="w-4 h-4 animate-spin" /> Menyusun ringkasan pagi...
+</div>
+)}
+{morningBrief && (
+<>
+<div className="flex flex-wrap items-center gap-2 mb-3">
+<span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${
+morningBrief.bias === 'RISK-ON' ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
+: morningBrief.bias === 'RISK-OFF' ? 'text-red-400 border-red-500/30 bg-red-500/10'
+: 'text-slate-300 border-white/10 bg-white/5'}`}>
+BIAS: {morningBrief.bias || 'NETRAL'}
+</span>
+<span className="text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
+{(morningBrief.events?.length || 0)} EVENT HARI INI
+</span>
+{morningBrief.aiGenerated === false && (
+<span className="text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-slate-400">
+MODE KALENDER
+</span>
+)}
+</div>
+<div className="text-sm sm:text-base font-black text-white leading-snug mb-2">{morningBrief.headline}</div>
+<div className="text-[13px] sm:text-sm text-slate-300 leading-relaxed mb-4">{morningBrief.summary}</div>
+{Array.isArray(morningBrief.events) && morningBrief.events.length > 0 && (
+<div className="mb-4">
+<div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Jadwal Event (WIB)</div>
+<div className="space-y-2">
+{morningBrief.events.map((ev, i) => (
+<div key={i} className="flex items-center gap-3 bg-[#0b1016] border border-white/5 rounded-xl px-3 py-2.5">
+<span className="text-[11px] font-black text-white tabular-nums w-[68px] shrink-0">{ev.time}</span>
+<span className={`text-[9px] font-black uppercase px-2 py-1 rounded border shrink-0 ${
+(ev.impact || '').toLowerCase() === 'high' ? 'text-red-400 border-red-500/30 bg-red-500/10'
+: 'text-amber-400 border-amber-500/30 bg-amber-500/10'}`}>{ev.impact}</span>
+<span className="text-[11px] sm:text-xs text-slate-300 font-medium leading-tight flex-1">
+<span className="text-slate-500 font-bold mr-1.5">{ev.country}</span>{ev.title}
+</span>
+</div>
+))}
+</div>
+</div>
+)}
+{Array.isArray(morningBrief.watchlist) && morningBrief.watchlist.length > 0 && (
+<div className="mb-4">
+<div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Watchlist</div>
+<div className="space-y-1.5">
+{morningBrief.watchlist.map((w, i) => (
+<div key={i} className="text-[12px] sm:text-[13px] text-cyan-200/90 font-medium bg-cyan-500/5 border-l-2 border-cyan-500/40 pl-3 py-1.5 rounded-r-lg">{w}</div>
+))}
+</div>
+</div>
+)}
+{morningBrief.caution ? (
+<div className="flex items-start gap-2.5 bg-red-500/10 border border-red-500/25 rounded-xl p-3">
+<ShieldAlert className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+<span className="text-[11px] sm:text-xs text-red-200/85 font-medium leading-relaxed">{morningBrief.caution}</span>
+</div>
+) : null}
+<div className="text-[9px] font-bold text-slate-600 uppercase tracking-widest mt-4">
+Dibuat {morningBrief.generatedAtWib || '-'} • otomatis 1x per hari
+</div>
+</>
+)}
+{!briefLoading && !morningBrief && (
+<div className="text-xs text-slate-500 font-bold text-center py-6">Ringkasan pagi belum tersedia. Tekan tombol perbarui.</div>
+)}
+</div>
+{/* =============== AKHIR RINGKASAN PAGI =============== */}
 <div className="flex bg-[#0b1016] border border-white/5 rounded-xl p-1 mb-6 shadow-lg overflow-x-auto custom-scrollbar">
 <button onClick={() => setNewsFilter('calendar')} className={`flex-shrink-0 flex-1
 py-3 px-4 text-xs font-black tracking-widest rounded-lg transition-all focus:outline-none
@@ -2082,10 +2232,15 @@ outline-none ${activeTab === 'history' ? 'bg-cyan-500/10 text-cyan-400 shadow-in
 items-center justify-center flex-1 py-2 rounded-xl transition-all focus:outline-none focus:ring-0
 outline-none ${activeTab === 'analyze' || activeTab === 'result' ? 'bg-amber-500/10 text-amber-400 shadow-inner' : 'text-slate-500 hover:text-slate-300'}`}><BarChart3
 className="w-4 h-4 sm:w-5 sm:h-5 mb-1" /><span className="text-[8px] sm:text-[9px] font-bold tracking-widest">ANALISIS</span></button>
-<button onClick={() => handleTabChange('news')} className={`flex flex-col
+<button onClick={() => handleTabChange('news')} className={`relative flex flex-col
 items-center justify-center flex-1 py-2 rounded-xl transition-all focus:outline-none focus:ring-0
 outline-none ${activeTab === 'news' ? 'bg-fuchsia-500/10 text-fuchsia-400 shadow-inner' :
-'text-slate-500 hover:text-slate-300'}`}><Globe className="w-4 h-4 sm:w-5 sm:h-5 mb-1"
+'text-slate-500 hover:text-slate-300'}`}>{briefUnread && (
+<span className="absolute top-1 right-1/2 translate-x-[16px] flex items-center justify-center">
+<span className="absolute w-3 h-3 rounded-full bg-amber-400/60 animate-ping"></span>
+<span className="w-2 h-2 rounded-full bg-amber-400 border border-[#0b1016]"></span>
+</span>
+)}<Globe className="w-4 h-4 sm:w-5 sm:h-5 mb-1"
 /><span className="text-[8px] sm:text-[9px] font-bold tracking-widest">NEWS</span></button>
 <button onClick={() => handleTabChange('settings')} className={`flex flex-col
 items-center justify-center flex-1 py-2 rounded-xl transition-all focus:outline-none focus:ring-0

@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -277,13 +277,47 @@ async def _fetch_headlines(query: str, limit: int = 12) -> List[str]:
         return []
 
 
-async def _fetch_calendar(limit: int = 14) -> List[str]:
+FF_CACHE_TTL = 1800  # ForexFactory memberi 429 kalau terlalu sering -> cache 30 menit
+_ff_cache: Dict[str, Any] = {'ts': 0.0, 'data': None}
+
+
+async def _ff_calendar_raw() -> list:
+    """Ambil kalender ForexFactory dengan cache memori + MongoDB (anti rate-limit)."""
+    now = datetime.now(timezone.utc).timestamp()
+    if _ff_cache.get('data') and now - _ff_cache['ts'] < FF_CACHE_TTL:
+        return _ff_cache['data']
     try:
         async with httpx.AsyncClient(timeout=20) as c:
             r = await c.get(FF_CALENDAR, headers=UA)
-        if r.status_code != 200:
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, list) and data:
+                _ff_cache.update({'ts': now, 'data': data})
+                await db['ff_cache'].update_one(
+                    {'key': 'thisweek'},
+                    {'$set': {'key': 'thisweek', 'ts': now, 'events': data}},
+                    upsert=True,
+                )
+                return data
+        else:
+            logger.warning(f'FF calendar HTTP {r.status_code} - memakai cache')
+    except Exception as e:
+        logger.warning(f'FF calendar error: {e}')
+
+    if _ff_cache.get('data'):
+        return _ff_cache['data']
+    doc = await db['ff_cache'].find_one({'key': 'thisweek'})
+    if doc and doc.get('events'):
+        _ff_cache.update({'ts': doc.get('ts', 0.0), 'data': doc['events']})
+        return doc['events']
+    return []
+
+
+async def _fetch_calendar(limit: int = 14) -> List[str]:
+    try:
+        events = await _ff_calendar_raw()
+        if not events:
             return []
-        events = r.json()
         now = datetime.now(timezone.utc)
         rows = []
         for ev in events:
@@ -363,6 +397,166 @@ def _inject_context(contents: List[Dict[str, Any]], context: str) -> List[Dict[s
 async def news_context(hint: str = 'forex'):
     text = await build_grounding_context(hint)
     return {'ok': bool(text), 'context': text}
+
+
+# ----------------------------------------------------------------------------
+# RINGKASAN PAGI (Morning Brief)
+# Dibuat maksimal 1x per hari (WIB) lalu di-cache di MongoDB sehingga semua
+# sesi memakai hasil yang sama -> sangat hemat kuota/credit LLM.
+# ----------------------------------------------------------------------------
+JKT = timezone(timedelta(hours=7))
+MORNING_COL = 'morning_brief'
+MARKET_OPEN_WIB = '06:00'
+
+
+def _jkt_now() -> datetime:
+    return datetime.now(JKT)
+
+
+def _brief_date_key(now: Optional[datetime] = None) -> str:
+    return (now or _jkt_now()).strftime('%Y-%m-%d')
+
+
+async def _fetch_calendar_events(day_key: str) -> List[Dict[str, Any]]:
+    """Ambil event kalender ekonomi (High/Medium) untuk tanggal WIB tertentu."""
+    events = await _ff_calendar_raw()
+    if not events:
+        return []
+
+    rows: List[Any] = []
+    for ev in events:
+        impact = (ev.get('impact') or '').lower()
+        if impact not in ('high', 'medium'):
+            continue
+        try:
+            when = datetime.fromisoformat(ev['date'])
+        except Exception:
+            continue
+        when_wib = when.astimezone(JKT)
+        if when_wib.strftime('%Y-%m-%d') != day_key:
+            continue
+        rows.append((when_wib, {
+            'time': when_wib.strftime('%H:%M') + ' WIB',
+            'country': ev.get('country') or '-',
+            'title': ev.get('title') or '-',
+            'impact': (ev.get('impact') or '').title(),
+            'forecast': ev.get('forecast') or '-',
+            'previous': ev.get('previous') or '-',
+        }))
+    rows.sort(key=lambda x: x[0])
+    return [d for _, d in rows[:16]]
+
+
+def _fallback_brief(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    highs = [e for e in events if e['impact'].lower() == 'high']
+    if not events:
+        headline = 'Tidak ada rilis data High/Medium hari ini'
+        summary = ('Kalender ekonomi relatif kosong. Pergerakan cenderung didorong '
+                   'likuiditas teknikal dan sentimen pasar, bukan katalis data.')
+    else:
+        top = (highs or events)[0]
+        headline = f"{len(events)} rilis data terjadwal — fokus {top['country']} {top['title']}"
+        summary = ('Perhatikan jam rilis di bawah. Volatilitas biasanya melonjak '
+                   '15 menit sebelum sampai 30 menit setelah data high-impact.')
+    return {
+        'headline': headline,
+        'bias': 'NETRAL',
+        'summary': summary,
+        'watchlist': [],
+        'caution': ('Hindari entry baru tepat saat rilis data high-impact karena spread '
+                    'dan slippage melebar.') if highs else '',
+    }
+
+
+async def _generate_morning_brief(day_key: str) -> Dict[str, Any]:
+    events = await _fetch_calendar_events(day_key)
+    headlines = await _fetch_headlines('forex market OR federal reserve OR gold price OR bitcoin', limit=8)
+
+    ev_lines = [
+        f"- {e['time']} | {e['country']} | {e['title']} | impact={e['impact']} | "
+        f"forecast={e['forecast']} | previous={e['previous']}"
+        for e in events
+    ] or ['- (tidak ada rilis High/Medium hari ini)']
+
+    prompt = (
+        'Anda analis makro untuk trader FX & crypto futures. Buat RINGKASAN PAGI '
+        f'singkat untuk tanggal {day_key} (zona waktu WIB), dibaca sebelum pasar buka.\n\n'
+        'KALENDER EKONOMI HARI INI (WIB):\n' + '\n'.join(ev_lines) +
+        '\n\nHEADLINE 48 JAM TERAKHIR:\n' + '\n'.join(headlines or ['- (tidak tersedia)']) +
+        '\n\nJawab HANYA JSON valid tanpa markdown, format:\n'
+        '{"headline":"maks 12 kata","bias":"RISK-ON|RISK-OFF|NETRAL",'
+        '"summary":"2-3 kalimat padat kondisi makro & apa yang perlu diwaspadai",'
+        '"watchlist":["SIMBOL: catatan maks 12 kata","..."],'
+        '"caution":"1 kalimat peringatan jam volatil"}\n'
+        'Aturan: pakai HANYA fakta dari data di atas, jangan mengarang rilis/angka. '
+        'watchlist maksimal 4 item (contoh simbol: XAUUSD, EURUSD, BTCUSDT, DXY). '
+        'Bahasa Indonesia, ringkas, tanpa basa-basi.'
+    )
+
+    result: Dict[str, Any]
+    try:
+        data = await _gemini_with_fallback({
+            'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
+            'generationConfig': {
+                'temperature': 0.3,
+                'maxOutputTokens': 2048,
+                'responseMimeType': 'application/json',
+            },
+        }, None)
+        text = ''
+        for part in (data.get('candidates') or [{}])[0].get('content', {}).get('parts', []):
+            text += part.get('text') or ''
+        text = re.sub(r'^```(?:json)?|```$', '', text.strip(), flags=re.M).strip()
+        parsed = json.loads(text)
+        result = {
+            'headline': str(parsed.get('headline') or '')[:160],
+            'bias': str(parsed.get('bias') or 'NETRAL').upper()[:12],
+            'summary': str(parsed.get('summary') or '')[:700],
+            'watchlist': [str(w)[:120] for w in (parsed.get('watchlist') or [])][:4],
+            'caution': str(parsed.get('caution') or '')[:300],
+        }
+        if not result['headline'] or not result['summary']:
+            raise ValueError('empty brief')
+        result['aiGenerated'] = True
+    except Exception as e:
+        logger.warning(f'morning brief AI failed, fallback used: {e}')
+        result = _fallback_brief(events)
+        result['aiGenerated'] = False
+
+    doc = {
+        'id': str(uuid.uuid4()),
+        'date': day_key,
+        'marketOpen': MARKET_OPEN_WIB,
+        'generatedAt': datetime.now(timezone.utc).isoformat(),
+        'generatedAtWib': _jkt_now().strftime('%d %b %Y %H:%M WIB'),
+        'events': events,
+        **result,
+    }
+    await db[MORNING_COL].update_one({'date': day_key}, {'$set': doc}, upsert=True)
+    return doc
+
+
+_brief_lock = asyncio.Lock()
+
+
+@api.get('/news/morning-brief')
+async def morning_brief(force: bool = False):
+    """Ringkasan pagi harian. Digenerate maksimal 1x/hari lalu di-cache."""
+    day_key = _brief_date_key()
+    if not force:
+        cached = _clean(await db[MORNING_COL].find_one({'date': day_key}))
+        if cached:
+            return {'ok': True, 'cached': True, 'brief': cached}
+
+    async with _brief_lock:
+        # cek ulang setelah menunggu lock (hindari generate ganda)
+        if not force:
+            cached = _clean(await db[MORNING_COL].find_one({'date': day_key}))
+            if cached:
+                return {'ok': True, 'cached': True, 'brief': cached}
+        doc = await _generate_morning_brief(day_key)
+    doc.pop('_id', None)
+    return {'ok': True, 'cached': False, 'brief': doc}
 
 
 # Cached probe: is native Google Search grounding usable on this API tier?
