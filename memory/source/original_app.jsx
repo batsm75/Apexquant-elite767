@@ -50,9 +50,9 @@ Pemulihan</h1>
 return this.props.children;
 }
 }
-const TWELVEDATA_API_KEY = 'e05d2f88dfe9497fa9babf09926b4bb0';
-const SOSO_API_KEY = 'SOSO-228e1006991f4fc18252223a26f4f9db';
-const DEEPSEEK_API_KEY = 'sk-19318b9ea0d341e4b7eadeae124b2737';
+const TWELVEDATA_API_KEY = '***REDACTED***';
+const SOSO_API_KEY = '***REDACTED***';
+const DEEPSEEK_API_KEY = '***REDACTED***';
 const computeIndicators = (candles) => {
 if (!candles || candles.length < 50) return null;
 const closes = candles.map(c => c.close);

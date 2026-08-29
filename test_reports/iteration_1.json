@@ -16,7 +16,7 @@
         "issue": "DeepSeek API returns HTTP 402 'Payment Required' - falls back to Gemini which also fails due to quota",
         "impact": "Dual-verification feature non-functional",
         "fix_priority": "HIGH",
-        "root_cause": "DeepSeek API key sk-19318b9ea0d341e4b7eadeae124b2737 requires payment",
+        "root_cause": "DeepSeek API key ***REDACTED*** requires payment",
         "workaround": "Gemini fallback implemented but also quota-limited"
       }
     ],

@@ -27,9 +27,9 @@ EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 LLM_PROVIDER = os.environ.get('LLM_PROVIDER', 'gemini')
 LLM_MODEL = os.environ.get('LLM_MODEL', 'gemini-2.5-flash')
 
-TWELVEDATA_API_KEY = os.environ.get('TWELVEDATA_API_KEY', 'e05d2f88dfe9497fa9babf09926b4bb0')
-SOSO_API_KEY = os.environ.get('SOSO_API_KEY', 'SOSO-228e1006991f4fc18252223a26f4f9db')
-DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', 'sk-19318b9ea0d341e4b7eadeae124b2737')
+TWELVEDATA_API_KEY = os.environ.get('TWELVEDATA_API_KEY', '')
+SOSO_API_KEY = os.environ.get('SOSO_API_KEY', '')
+DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -453,19 +453,63 @@ def _fallback_brief(events: List[Dict[str, Any]]) -> Dict[str, Any]:
         headline = 'Tidak ada rilis data High/Medium hari ini'
         summary = ('Kalender ekonomi relatif kosong. Pergerakan cenderung didorong '
                    'likuiditas teknikal dan sentimen pasar, bukan katalis data.')
+        prediksi = ['Kalender sepi nih, market gampang muter di range. '
+                    'Mending sabar nunggu breakout beneran deh.']
     else:
         top = (highs or events)[0]
         headline = f"{len(events)} rilis data terjadwal — fokus {top['country']} {top['title']}"
         summary = ('Perhatikan jam rilis di bawah. Volatilitas biasanya melonjak '
                    '15 menit sebelum sampai 30 menit setelah data high-impact.')
+        prediksi = [f"Jam {top['time']} ada {top['title']} ({top['country']}), "
+                    'biasanya harga suka dibikin spike dulu — hati-hati aja.']
     return {
         'headline': headline,
         'bias': 'NETRAL',
         'summary': summary,
+        'prediksi': prediksi,
         'watchlist': [],
         'caution': ('Hindari entry baru tepat saat rilis data high-impact karena spread '
                     'dan slippage melebar.') if highs else '',
+        'engine': 'kalender',
     }
+
+
+async def _deepseek_json(prompt: str, temperature: float = 0.7) -> dict:
+    """Panggil DeepSeek (key milik user, bukan credit Emergent) dan kembalikan JSON."""
+    if not DEEPSEEK_API_KEY:
+        raise RuntimeError('DEEPSEEK_API_KEY belum diset')
+    body = {
+        'model': 'deepseek-chat',
+        'messages': [{'role': 'user', 'content': prompt}],
+        'temperature': temperature,
+        'response_format': {'type': 'json_object'},
+    }
+    async with httpx.AsyncClient(timeout=120) as c:
+        r = await c.post(
+            'https://api.deepseek.com/v1/chat/completions',
+            headers={'Content-Type': 'application/json',
+                     'Authorization': f'Bearer {DEEPSEEK_API_KEY}'},
+            json=body,
+        )
+    if r.status_code != 200:
+        raise RuntimeError(f'DeepSeek HTTP {r.status_code}: {r.text[:200]}')
+    content = r.json()['choices'][0]['message']['content']
+    content = re.sub(r'^```(?:json)?|```$', '', content.strip(), flags=re.M).strip()
+    return json.loads(content)
+
+
+def _parse_brief_json(parsed: dict) -> Dict[str, Any]:
+    out = {
+        'headline': str(parsed.get('headline') or '')[:160],
+        'bias': str(parsed.get('bias') or 'NETRAL').upper()[:12],
+        'summary': str(parsed.get('summary') or '')[:700],
+        'prediksi': [str(p)[:220] for p in (parsed.get('prediksi') or []) if str(p).strip()][:3],
+        'watchlist': [str(w)[:120] for w in (parsed.get('watchlist') or [])][:4],
+        'caution': str(parsed.get('caution') or '')[:300],
+    }
+    if not out['headline'] or not out['summary'] or not out['prediksi']:
+        raise ValueError('brief tidak lengkap')
+    return out
 
 
 async def _generate_morning_brief(day_key: str) -> Dict[str, Any]:
@@ -479,49 +523,57 @@ async def _generate_morning_brief(day_key: str) -> Dict[str, Any]:
     ] or ['- (tidak ada rilis High/Medium hari ini)']
 
     prompt = (
-        'Anda analis makro untuk trader FX & crypto futures. Buat RINGKASAN PAGI '
-        f'singkat untuk tanggal {day_key} (zona waktu WIB), dibaca sebelum pasar buka.\n\n'
+        'Kamu analis makro senior yang ngobrol santai ke teman trader FX & crypto futures. '
+        f'Buat RINGKASAN PAGI untuk tanggal {day_key} (zona waktu WIB), dibaca sebelum pasar '
+        'buka jam 06:00 WIB.\n\n'
         'KALENDER EKONOMI HARI INI (WIB):\n' + '\n'.join(ev_lines) +
         '\n\nHEADLINE 48 JAM TERAKHIR:\n' + '\n'.join(headlines or ['- (tidak tersedia)']) +
         '\n\nJawab HANYA JSON valid tanpa markdown, format:\n'
         '{"headline":"maks 12 kata","bias":"RISK-ON|RISK-OFF|NETRAL",'
-        '"summary":"2-3 kalimat padat kondisi makro & apa yang perlu diwaspadai",'
+        '"summary":"2-3 kalimat padat kondisi makro (bahasa Indonesia rapi)",'
+        '"prediksi":["kalimat prediksi gaya ngobrol/bahasa gaul","..."],'
         '"watchlist":["SIMBOL: catatan maks 12 kata","..."],'
-        '"caution":"1 kalimat peringatan jam volatil"}\n'
-        'Aturan: pakai HANYA fakta dari data di atas, jangan mengarang rilis/angka. '
-        'watchlist maksimal 4 item (contoh simbol: XAUUSD, EURUSD, BTCUSDT, DXY). '
-        'Bahasa Indonesia, ringkas, tanpa basa-basi.'
+        '"caution":"1 kalimat peringatan jam volatil"}\n\n'
+        'ATURAN PENTING:\n'
+        '1. "prediksi" WAJIB 2-3 kalimat PREDIKTIF pakai BAHASA GAUL santai (kayak chat ke '
+        'teman), sebutkan sesi (Asia/London/US) dan aset spesifik (gold/XAUUSD, EURUSD, '
+        'BTC, DXY, indeks). Contoh gaya: "Berita sesi US hari ini kayaknya gold bakal dibikin '
+        'spike dulu deh, hati-hati aja." Boleh pakai kata: kayaknya, bakal, mending, '
+        'hati-hati, gaskeun, rawan, dibikin. Variasikan kalimat, jangan copy contoh.\n'
+        '2. Prediksi harus nyambung dengan event & headline di atas, JANGAN mengarang rilis '
+        'data, angka, atau level harga yang tidak ada di data.\n'
+        '3. watchlist maksimal 4 item. "summary" tetap bahasa Indonesia rapi (bukan gaul).\n'
+        '4. Ringkas, tanpa basa-basi, tanpa disclaimer panjang.'
     )
 
     result: Dict[str, Any]
+    # 1) DeepSeek dulu (sesuai permintaan user + tidak memakai credit Emergent)
     try:
-        data = await _gemini_with_fallback({
-            'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
-            'generationConfig': {
-                'temperature': 0.3,
-                'maxOutputTokens': 2048,
-                'responseMimeType': 'application/json',
-            },
-        }, None)
-        text = ''
-        for part in (data.get('candidates') or [{}])[0].get('content', {}).get('parts', []):
-            text += part.get('text') or ''
-        text = re.sub(r'^```(?:json)?|```$', '', text.strip(), flags=re.M).strip()
-        parsed = json.loads(text)
-        result = {
-            'headline': str(parsed.get('headline') or '')[:160],
-            'bias': str(parsed.get('bias') or 'NETRAL').upper()[:12],
-            'summary': str(parsed.get('summary') or '')[:700],
-            'watchlist': [str(w)[:120] for w in (parsed.get('watchlist') or [])][:4],
-            'caution': str(parsed.get('caution') or '')[:300],
-        }
-        if not result['headline'] or not result['summary']:
-            raise ValueError('empty brief')
-        result['aiGenerated'] = True
-    except Exception as e:
-        logger.warning(f'morning brief AI failed, fallback used: {e}')
-        result = _fallback_brief(events)
-        result['aiGenerated'] = False
+        result = _parse_brief_json(await _deepseek_json(prompt))
+        result['engine'] = 'deepseek'
+    except Exception as e_ds:
+        logger.warning(f'morning brief DeepSeek gagal: {e_ds}; coba Gemini')
+        # 2) Fallback Gemini (1 panggilan)
+        try:
+            data = await _gemini_with_fallback({
+                'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
+                'generationConfig': {
+                    'temperature': 0.7,
+                    'maxOutputTokens': 8192,
+                    'responseMimeType': 'application/json',
+                },
+            }, None)
+            text = ''
+            for part in (data.get('candidates') or [{}])[0].get('content', {}).get('parts', []):
+                text += part.get('text') or ''
+            text = re.sub(r'^```(?:json)?|```$', '', text.strip(), flags=re.M).strip()
+            result = _parse_brief_json(json.loads(text))
+            result['engine'] = 'gemini'
+        except Exception as e_g:
+            logger.warning(f'morning brief Gemini gagal juga: {e_g}; pakai mode kalender')
+            result = _fallback_brief(events)
+
+    result['aiGenerated'] = result.get('engine') in ('deepseek', 'gemini')
 
     doc = {
         'id': str(uuid.uuid4()),

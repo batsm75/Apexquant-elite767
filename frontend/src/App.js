@@ -53,9 +53,8 @@ Pemulihan</h1>
 return this.props.children;
 }
 }
-const TWELVEDATA_API_KEY = 'e05d2f88dfe9497fa9babf09926b4bb0';
-const SOSO_API_KEY = 'SOSO-228e1006991f4fc18252223a26f4f9db';
-const DEEPSEEK_API_KEY = 'sk-19318b9ea0d341e4b7eadeae124b2737';
+// CATATAN KEAMANAN: tidak ada API key di frontend. Semua kredensial (Gemini, DeepSeek,
+// TwelveData, SosoValue) hanya disimpan di backend/.env dan dipakai lewat endpoint /api/proxy/*.
 const computeIndicators = (candles) => {
 if (!candles || candles.length < 50) return null;
 const closes = candles.map(c => c.close);
@@ -124,9 +123,7 @@ atr: isNaN(atr14) ? 0 : atr14.toFixed(5)
 };
 const fetchSosovalueData = async (symbol) => {
 try {
-const res = await fetch(`${API_BASE}/api/proxy/sosovalue?symbol=${symbol}`, {
-headers: { 'Authorization': `Bearer ${SOSO_API_KEY}` }
-});
+const res = await fetch(`${API_BASE}/api/proxy/sosovalue?symbol=${symbol}`);
 if (!res.ok) throw new Error('API Sosovalue diblokir atau limit');
 const data = await res.json();
 return data.text || JSON.stringify(data.data || data);
@@ -155,10 +152,7 @@ Balas HANYA dengan JSON format:
 setuju (terverifikasi) atau tidak setuju (perbedaan analisis)."}`;
 const res = await fetch(`${API_BASE}/api/proxy/deepseek`, {
 method: 'POST',
-headers: {
-'Content-Type': 'application/json',
-'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
-},
+headers: { 'Content-Type': 'application/json' },
 body: JSON.stringify({ prompt })
 });
 if (!res.ok) throw new Error('DeepSeek failed');
@@ -411,9 +405,6 @@ try { return await fetchBinanceData(symbol, tf); }
 catch (e) { return await fetchBitgetData(symbol, tf); }
 };
 const fetchForexLiveData = async (symbolRaw, tf) => {
-if (!TWELVEDATA_API_KEY || TWELVEDATA_API_KEY.startsWith('GANTI_')) {
-throw new Error('TwelveData API key belum di-set.');
-}
 const symbol = symbolRaw.includes('/') ? symbolRaw :
 symbolRaw.replace(/^([A-Z]{3})([A-Z]{3})$/, '$1/$2');
 const interval = TF_MAP.TwelveData[tf];
@@ -1862,9 +1853,29 @@ BIAS: {morningBrief.bias || 'NETRAL'}
 MODE KALENDER
 </span>
 )}
+{morningBrief.engine && morningBrief.engine !== 'kalender' && (
+<span className="text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-300">
+ANALISIS {morningBrief.engine}
+</span>
+)}
 </div>
 <div className="text-sm sm:text-base font-black text-white leading-snug mb-2">{morningBrief.headline}</div>
 <div className="text-[13px] sm:text-sm text-slate-300 leading-relaxed mb-4">{morningBrief.summary}</div>
+{Array.isArray(morningBrief.prediksi) && morningBrief.prediksi.length > 0 && (
+<div className="bg-violet-500/10 border border-violet-500/25 rounded-2xl p-4 mb-4 shadow-sm">
+<div className="flex items-center gap-2 mb-2.5">
+<Radio className="w-4 h-4 text-violet-300" />
+<span className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Prediksi Hari Ini</span>
+</div>
+<div className="space-y-2">
+{morningBrief.prediksi.map((p, i) => (
+<div key={i} className="text-[13px] sm:text-sm text-violet-100/90 font-medium leading-relaxed flex gap-2">
+<span className="text-violet-400 font-black shrink-0">›</span><span>{p}</span>
+</div>
+))}
+</div>
+</div>
+)}
 {Array.isArray(morningBrief.events) && morningBrief.events.length > 0 && (
 <div className="mb-4">
 <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Jadwal Event (WIB)</div>
