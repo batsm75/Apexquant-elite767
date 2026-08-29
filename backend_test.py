@@ -5,7 +5,7 @@ import sys
 import time
 
 # Use the public URL
-BASE_URL = "https://jsx-replica.preview.emergentagent.com/api"
+BASE_URL = "https://repo-preview-live-9.preview.emergentagent.com/api"
 
 class BackendTester:
     def __init__(self):
